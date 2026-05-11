@@ -1,7 +1,6 @@
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 library(tidyverse)
-library(rstan)
 library(ggplot2)
 library(forcats)
 library(class)
@@ -11,9 +10,6 @@ library(rpart.plot)
 library(ROCR)
 library(GGally)
 library(randomForest)
-
-rstan_options(auto_write = TRUE)
-options(mc.cores = parallel::detectCores())
 ```
 ## Task 2.1
 Reading in the data, stating dimensions, and converting type into factor labelled "Y" and "N".
