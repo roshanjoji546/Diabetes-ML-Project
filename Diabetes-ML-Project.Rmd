@@ -1,0 +1,685 @@
+---
+title: "Diabetes-ML-Project"
+author: "Roshan Joji"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(ggplot2)
+library(forcats)
+library(class)
+library(gbm)
+library(rpart)
+library(rpart.plot)
+library(ROCR)
+library(GGally)
+library(randomForest)
+```
+
+## Task 2.1
+Reading in the data, stating dimensions, and converting type into factor labelled "Y" and "N".
+```{r Task_2_1}
+# Reading in data
+diabetes_training <- read.csv("diabetes_training.csv")
+diabetes_test <- read.csv("diabetes_test.csv")
+
+# Dimensions
+dim(diabetes_training)
+dim(diabetes_test)
+
+# Convert type to factor
+diabetes_training <- diabetes_training %>%
+  mutate(type_f = factor(type, levels = c("No", "Yes"), labels = c("N", "Y")))
+
+diabetes_test <- diabetes_test %>%
+  mutate(type_f = factor(type, levels = c("No", "Yes"), labels = c("N", "Y")))
+
+```
+## Task 2.2
+First graph shows a scatter plot of bmi against glu, with points labelled by type_f (training data). Second graph shows the same for both training and test data, in a combined faceted scatter plot.
+```{r Task_2_2, echo=FALSE, fig.width=9, fig.height=4}
+# Scatter plot of bmi against glu with points labelled by type_f
+ggplot(diabetes_training, aes(x= glu, y = bmi, colour = type_f, shape = type_f)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_colour_manual(values = c("N" = "green", "Y" = "red")) +
+  scale_shape_manual(values = c("N" = 16, "Y" = 3)) +
+  labs(
+    x = "Plasma Glucose Concentration",
+    y = "Body Mass Index",
+    colour = "Diabetes (type_f)",
+    shape = "Diabetes (type_f)",
+    title = "BMI vs Glucose by Diabetes Status (Training)"
+  ) +
+  theme_grey() +
+  theme(
+    panel.background = element_rect(fill = "grey90"),
+    panel.grid.major = element_line(colour = "white", linewidth = 0.6),
+    panel.grid.minor = element_line(colour = "white", linewidth = 0.3),
+    legend.position = "right",
+    legend.key = element_rect(fill = "grey90"),
+    text = element_text(size = 13),
+    legend.title = element_text(size = 12)
+  )
+
+# Combined faceted plot
+combined <- bind_rows(
+  diabetes_training %>% mutate(dataset = "Training"),
+  diabetes_test %>% mutate(dataset = "Test")
+)
+
+ggplot(combined, aes(x = glu, y = bmi, colour = type_f, shape = type_f)) +
+  geom_point(size = 2.8, alpha = 0.85) +
+  facet_grid(~dataset) +
+  scale_colour_manual(values = c("N" = "green", "Y" = "red")) +
+  scale_shape_manual(values = c("N" = 16, "Y" = 3)) +
+  labs(
+    x = "Plasma Glucose Concentration",
+    y = "Body Mass Index",
+    colour = "Diabetes (type_f)",
+    shape = "Diabetes (type_f)",
+    title = "BMI vs Glucose by Diabetes Status (Training vs Test)"
+  ) +
+  theme_grey() +
+  theme(
+    panel.background = element_rect(fill = "grey90"),
+    panel.grid.major = element_line(colour = "white", size = 0.6),
+    panel.grid.minor = element_line(colour = "white", size = 0.3),
+    legend.key = element_rect(fill = "grey90"),
+    strip.background = element_rect(fill = "grey80"),
+    strip.text = element_text(size = 12, face = "bold"),
+    text = element_text(size = 13),
+    legend.title = element_text(size = 12)
+  )
+```
+
+## Task 2.3
+Finding max. pregnancies in both datasets, and converting "npreg" into a factor "npreg_6_f".
+```{r Task_2_3}
+# Max number of pregnancies in test and training datasets
+max(diabetes_training$npreg)
+
+max(diabetes_test$npreg)
+
+# Creating factor npreg_6_f (training data)
+diabetes_training <- diabetes_training %>%
+  mutate(npreg_6_f = fct_collapse(
+    as.factor(npreg),
+    "6 or more" = as.character(6:20)
+  ))
+
+# Creating factor npreg_6_f (test data)
+diabetes_test <- diabetes_test %>%
+  mutate(npreg_6_f = fct_collapse(
+    as.factor(npreg),
+    "6 or more" = as.character(6:20)
+  ))
+
+# Level ordering
+diabetes_training <- diabetes_training %>%
+  mutate(npreg_6_f = factor(npreg_6_f,
+                            levels = c("0","1","2","3","4","5","6 or more")
+                            ))
+
+diabetes_test <- diabetes_test %>%
+  mutate(npreg_6_f = factor(npreg_6_f,
+                            levels = c("0","1","2","3","4","5","6 or more")
+                            ))
+
+# Tabulate results
+table(diabetes_training$npreg_6_f)
+
+table(diabetes_test$npreg_6_f)
+```
+## Task 2.4
+The full binary logistic regression model was fitted before backward elimination.
+```{r Task_2_4_1}
+# Fitting full model before backward elimination
+model_full <- glm(type_f ~ npreg_6_f +
+                    age + I(age^2) + I(age^3) +
+                    glu + I(glu^2) + I(glu^3) +
+                    bmi + I(bmi^2) + I(bmi^3) +
+                    bp + skin + ped +
+                    I(glu * bmi),
+                  data = diabetes_training,
+                  family = binomial)
+```
+The least significant variable is "npreg_6_f5", with the highest p-value of 0.9075. As the other factors of "npreg_6_f" are not found to be statistically significant either (p > 0.05), the whole variable "npreg_6_f" was removed, and this was fitted as a simpler "model_1".
+
+The variable with the highest p-value in "model_1" is "Age^2". However, a lower-order term cannot be removed from the model while a higher order term exists. Therefore, "Age^3" was removed as it was also statistically insignificant, and allowed for evaluation of the lower-order terms.
+
+The least significant variable in the next model, "model_2", is "skin" with a p-value of 0.8543. There are no hierarchical restrictions for this variable, and was therefore removed to create "model_3".
+
+This elimination process was repeated removing statistically insignificant variables "glu*bmi", "glu^3", "glu^2", "bmi^3", "bmi^2", "bp" in order. The final model, "model_9", contains five remaining variables: age, age^2, glu, bmi, and ped, all of which were significant (p<0.05).
+```{r Task_2_4_5}
+model_9 <- glm(type_f ~
+                 age + I(age^2) +
+                 glu +
+                 bmi +
+                 ped,
+               data = diabetes_training,
+               family = binomial)
+```
+The final model was evaluated on the test data and used to create probability values. Using a threshold of 0.5 for type 'Y' classification, a confusion matrix was created.
+```{r Task_2_4_6}
+# Evaluation of the model on the test data
+# Probability prediction
+probs <- predict(model_9, diabetes_test, type = "response")
+
+# Convert probabilities to yes or no based on 0.5 threshold
+pred <- ifelse(probs > 0.5, "Y", "N")
+
+# Create confusion matrix
+cm <- table(Predicted = pred, Actual = diabetes_test$type_f)
+cm
+```
+
+True positive/negative and false positive/negative values were used to calculate model metrics such as error, accuracy, sensitivity, specificity and precision. These metrics will help to compare performance between different models.
+
+```{r Task_2_4_7}
+# Calculate model accuracy, sensitivity, specificity, precision, and FPR
+# Extract values
+TN <- cm["N","N"]
+FN <- cm["N","Y"]
+FP <- cm["Y","N"]
+TP <- cm["Y","Y"]
+
+# Error
+error <- (FP + FN) / (TP + TN + FP + FN)
+
+# Accuracy
+accuracy <- (TP + TN) / (TP + TN + FP + FN)
+
+# Sensitivity
+sensitivity <- TP / (TP + FN)
+
+# Specificity
+specificity <- TN / (TN + FP)
+
+# Precision
+precision <- TP / (TP + FP)
+```
+## Task 2.5
+As before, the full simple binary logistic regression model was fitted before backward elimination. Backward elimination allowed for the removal of statistically insignificant variables "npreg_6_f", "skin", and "bp" in order. The model can be expressed mathematically as shown below:
+$$
+Y_i \sim \text{Bernoulli}(p_i)
+$$
+$$
+\log\left(\frac{p_i}{1 - p_i}\right)
+= \beta_0 + \beta_1 age_i + \beta_2 glu_i + \beta_3 bmi_i + \beta_4 ped_i
+$$
+
+As before, the final model was evaluated on the test data and used to create probability values. A confusion matrix was created using the same 0.5 threshold. The confusion matrix for this model is shown below:
+```{r Task_2_5, echo=FALSE}
+# Next variable to remove is bp as it has the highest p-value and is not
+# statistically significant.
+
+model_simple_3 <- glm(type_f ~
+                        age +
+                        glu +
+                        bmi +
+                        ped,
+                      data = diabetes_training,
+                      family = binomial)
+
+# Evaluation of the simple model on the test data
+# Probability prediction
+probs_simple <- predict(model_simple_3, diabetes_test, type = "response")
+
+# Convert probabilities to yes or no based on 0.5 threshold
+pred_simple <- ifelse(probs_simple > 0.5, "Y", "N")
+
+# Create confusion matrix
+cm_simple <- table(Predicted = pred_simple, Actual = diabetes_test$type_f)
+cm_simple
+```
+```{r Task_2_5_1, echo=FALSE}
+# Calculate simple model sensitivity, specificity, PPV, and NPV
+# Extract values
+TN_simple <- cm_simple["N","N"]
+FN_simple <- cm_simple["N","Y"]
+FP_simple <- cm_simple["Y","N"]
+TP_simple <- cm_simple["Y","Y"]
+
+# Error
+error_simple <- (FP_simple + FN_simple) / (TP_simple + TN_simple + FP_simple + FN_simple)
+
+# Accuracy
+accuracy_simple <- (TP_simple + TN_simple) / (TP_simple + TN_simple + FP_simple + FN_simple)
+
+# Sensitivity
+sensitivity_simple <- TP_simple / (TP_simple + FN_simple)
+
+# Specificity
+specificity_simple <- TN_simple / (TN_simple + FP_simple)
+
+# Precision
+precision_simple <- TP_simple / (TP_simple + FP_simple)
+```
+## Task 2.6
+A function was created to compute the F1 score for this simpler model, from the confusion matrix.
+```{r Task_2_6}
+# Writing a function to compute 'F1' from confusion matrix produced in 2.5
+F1 <- function(cm_simple) {
+  TP_simple <- cm_simple["Y","Y"]
+  FP_simple <- cm_simple["Y","N"]
+  FN_simple <- cm_simple["N","Y"]
+  
+  precision_simple <- TP_simple / (TP_simple + FP_simple)
+  sensitivity_simple <- TP_simple / (TP_simple + FN_simple)
+  
+  f1_score <- 2 * precision_simple * sensitivity_simple / (precision_simple + sensitivity_simple)
+  
+  return(f1_score)
+}
+```
+## Task 2.7
+A matrix of scatter plot for seven covariates, coloured according to "type_f" was created.
+```{r Task_2_7, fig.width=9, fig.height=5}
+ggpairs(diabetes_training,
+        columns = c("npreg", "age", "glu", "bmi", "bp", "skin", "ped"),
+        aes(colour = type_f, alpha = 0.4),
+        upper = list(continuous = "points"),
+        lower = list(continuous = "smooth"),
+        diag = list(continuous = "densityDiag"))
+```
+The plot shows that "glu" is the strongest discriminator between classes, with higher values being associated with diabetes. A weaker positive trend can be seen with variables "bmi" and "age", while other variables show much overlap, suggesting weak predictive power.
+
+## Task 2.8
+K-nearest neighbours was applied to the data. The model was trained using the training data, with 100 observations used for validation (k=5). A threshold of 0.5 was used to produce the confusion matrix from prediction values. Classification error rates were also calculated, along with an F1 score.
+```{r Task_2_8_1}
+# Creating validation set from training data
+set.seed(1)
+val_index <- sample(1:nrow(diabetes_training), 100) #randomly select 100 obsv for val
+
+validation_data <- diabetes_training[val_index, ]
+training_data_knn <- diabetes_training[-val_index, ]
+
+# Splitting X and Y (variables and type_f)
+vars <- c("npreg", "age", "glu", "bmi", "bp", "skin", "ped")
+
+train_x <- training_data_knn[, vars]
+train_y <- training_data_knn$type_f
+
+val_x <- validation_data[, vars]
+val_y <- validation_data$type_f
+
+test_x <- diabetes_test[, vars]
+test_y <- diabetes_test$type_f
+
+# Scaling using training only
+train_scaled <- scale(train_x)
+
+val_scaled <- scale(val_x,
+                    center = attr(train_scaled, "scaled:center"),
+                    scale = attr(train_scaled, "scaled:scale"))
+test_scaled <- scale(test_x,
+                     center = attr(train_scaled, "scaled:center"),
+                     scale = attr(train_scaled, "scaled:scale"))
+
+# Choosing best k value
+k_values <- 1:20
+val_errors <- rep(NA, length(k_values))
+
+for (k in k_values) {
+  pred_knn <- knn(train_scaled, val_scaled, cl = train_y, k = k)
+  cm_knn <- table(pred_knn, val_y)
+  
+  error_knn <- (cm_knn["Y","N"] + cm_knn["N","Y"]) / sum(cm_knn)
+  
+  val_errors[k] <- error_knn
+}
+
+best_k <- which.min(val_errors)
+
+# Final model on test data
+pred_knn_final <- knn(train_scaled, test_scaled, cl = train_y, k = best_k)
+
+cm_knn_final <- table(Predicted = pred_knn_final, Actual = test_y)
+cm_knn_final
+```
+```{r Task_2_8_2, echo=FALSE}
+# Extract TN, FN, FP, TP values
+TN_knn <- cm_knn_final["N","N"]
+FN_knn <- cm_knn_final["N","Y"]
+FP_knn <- cm_knn_final["Y","N"]
+TP_knn <- cm_knn_final["Y","Y"]
+
+# KNN Accuracy
+accuracy_knn <- (TP_knn + TN_knn) / (TP_knn + TN_knn + FP_knn + FN_knn)
+
+# KNN Sensitivity
+sensitivity_knn <- TP_knn / (TP_knn + FN_knn)
+
+# KNN Specificity
+specificity_knn <- TN_knn / (TN_knn + FP_knn)
+
+# KNN Precision
+precision_knn <- TP_knn / (TP_knn + FP_knn)
+
+# KNN F1 Score
+F1_knn <- 2 * precision_knn * sensitivity_knn / (precision_knn + sensitivity_knn)
+```
+Gradient boosting was also applied to the data using a Bernoulli distribution for binary classifications, trained with 5000 trees, interaction depth of 4, and a shrinkage parameter of 0.1. Shrinkage value of 0.1 was selected to provide a balance between model flexibility and overfitting, allowing gradual learning while maintaining stable performance. A threshold of 0.5 was used to produce the confusion matrix from prediction values. Classification error rates were also calculated, along with an F1 score.
+```{r Task_2_8_3}
+# Convert Y and N to 1 and 0
+train_y_boost <- ifelse(diabetes_training$type_f == "Y", 1, 0)
+test_y_boost <- ifelse(diabetes_test$type_f == "Y", 1, 0)
+
+# Fitting boosting model
+boost_model <- gbm(
+  train_y_boost ~ npreg + age + glu + bmi + bp + skin + ped,
+  data = diabetes_training,
+  distribution = "bernoulli",
+  n.trees = 5000,
+  interaction.depth = 4,
+  shrinkage = 0.1
+)
+
+# Predicting  probabilities
+probs_boost <- predict(boost_model,
+                       diabetes_test,
+                       n.trees = 5000,
+                       type = "response")
+
+# Converting probabilities back into Y and N classes
+pred_boost <- ifelse(probs_boost > 0.5, "Y", "N")
+
+# Creating confusion matrix
+cm_boost <- table(Predicted = pred_boost,
+                  Actual = diabetes_test$type_f)
+
+cm_boost
+```
+```{r Task_2_8_4, echo=FALSE}
+# Extract TN, FN, FP, TP values
+TN_boost <- cm_boost["N","N"]
+FN_boost <- cm_boost["N","Y"]
+FP_boost <- cm_boost["Y","N"]
+TP_boost <- cm_boost["Y","Y"]
+
+# Boosting Error
+error_boost <- (FP_boost + FN_boost) / (TP_boost + TN_boost + FP_boost + FN_boost)
+
+# Boosting Accuracy
+accuracy_boost <- (TP_boost + TN_boost) / (TP_boost + TN_boost + FP_boost + FN_boost)
+
+# Boosting Sensitivity
+sensitivity_boost <- TP_boost / (TP_boost + FN_boost)
+
+# Boosting Specificity
+specificity_boost <- TN_boost / (TN_boost + FP_boost)
+
+# Boosting Precision
+precision_boost <- TP_boost / (TP_boost + FP_boost)
+
+# Boosting F1 Score
+F1_boost <- 2 * precision_boost * sensitivity_boost / (precision_boost + sensitivity_boost)
+```
+A pruned tree model was applied to the data. A threshold 0.5 was used for classification from prediction values. Performance metrics and an F1 score was produced. The tree plot and confusion matrix are as seen below:
+```{r Task_2_8_5, fig.width=9, fig.height=4}
+# Fitting full tree
+tree_model <- rpart(
+  type_f ~ npreg + age + glu + bmi + bp + skin + ped,
+  data = diabetes_training,
+  method = "class"
+)
+
+# Find optimal CP
+best_cp <- tree_model$cptable[
+  which.min(tree_model$cptable[,"xerror"]),
+  "CP"
+]
+
+# Pruning the tree
+pruned_tree <- prune(tree_model, cp = best_cp)
+
+# Plot the tree
+rpart.plot(pruned_tree, type = 2, extra = 104)
+
+# Predictions on test data
+tree_pred <- predict(pruned_tree,
+                     diabetes_test,
+                     type = "class")
+
+# Confusion matrix
+cm_tree <- table(Predicted = tree_pred,
+                 Actual = diabetes_test$type_f)
+
+cm_tree
+```
+```{r Task_2_8_6, echo=FALSE}
+# Extract TN, FN, FP, TP values
+TN_tree <- cm_tree["N","N"]
+FN_tree <- cm_tree["N","Y"]
+FP_tree <- cm_tree["Y","N"]
+TP_tree <- cm_tree["Y","Y"]
+
+# Pruned Tree Error
+error_tree <- (FP_tree + FN_tree) / (TP_tree + TN_tree + FP_tree + FN_tree)
+
+# Pruned Tree Accuracy
+accuracy_tree <- (TP_tree + TN_tree) / (TP_tree + TN_tree + FP_tree + FN_tree)
+
+# Pruned Tree Sensitivity
+sensitivity_tree <- TP_tree / (TP_tree + FN_tree)
+
+# Pruned Tree Specificity
+specificity_tree <- TN_tree / (TN_tree + FP_tree)
+
+# Pruned Tree Precision
+precision_tree <- TP_tree / (TP_tree + FP_tree)
+
+# Pruned Tree F1 Score
+F1_tree <- 2 * precision_tree * sensitivity_tree / (precision_tree + sensitivity_tree)
+```
+Random forest model with 500 trees was applied to the data. A threshold 0.5 was used for classification from prediction values. Performance metrics and an F1 score was produced.
+```{r Task_2_8_7, results='hide'}
+# Fitting initial model
+rf_model <- randomForest(
+  type_f ~ npreg + age + glu + bmi + bp + skin + ped,
+  data = diabetes_training,
+  ntree = 500,
+  importance = TRUE
+)
+
+# Tuning mtry as default may not be optional
+set.seed(1)
+
+mtrytune <- tuneRF(
+  diabetes_training[, c("npreg", "age", "glu", "bmi", "bp", "skin", "ped")],
+  diabetes_training$type_f,
+  stepFactor = 1.5,
+  improve = 0.01,
+  ntreeTry = 500
+)
+```
+
+
+```{r Task_2_8_8}
+# Fit final tuned model
+best_mtry <- mtrytune[which.min(mtrytune[,2]), 1]
+
+rf_final <- randomForest(
+  type_f ~ npreg + age + glu + bmi + bp + skin + ped,
+  data = diabetes_training,
+  ntree = 500,
+  mtry = best_mtry,
+  importance = TRUE
+)
+
+# Predictions on test data
+rf_pred <- predict(rf_final, diabetes_test)
+
+# Confusion matrix
+cm_rf <- table(Predicted = rf_pred,
+               Actual = diabetes_test$type_f)
+
+cm_rf
+```
+```{r Task_2_8_9, echo=FALSE}
+# Extract TN, FN, FP, TP values
+TN_rf <- cm_rf["N","N"]
+FN_rf <- cm_rf["N","Y"]
+FP_rf <- cm_rf["Y","N"]
+TP_rf <- cm_rf["Y","Y"]
+
+# Random Forest Error
+error_rf <- (FP_rf + FN_rf) / (TP_rf + TN_rf + FP_rf + FN_rf)
+
+# Random Forest Accuracy
+accuracy_rf <- (TP_rf + TN_rf) / (TP_rf + TN_rf + FP_rf + FN_rf)
+
+# Random Forest Sensitivity
+sensitivity_rf <- TP_rf / (TP_rf + FN_rf)
+
+# Random Forest Specificity
+specificity_rf <- TN_rf / (TN_rf + FP_rf)
+
+# Random Forest Precision
+precision_rf <- TP_rf / (TP_rf + FP_rf)
+
+# Random Forest F1 Score
+F1_rf <- 2 * precision_rf * sensitivity_rf / (precision_rf + sensitivity_rf)
+
+varImpPlot(rf_final)
+```
+ROC curves and Area Under Curve (AUC) measures were produced for simple binary logistic regression and gradient boosting models as shown below. The code for the boosting model graph has been omitted due to similarity.
+```{r Task_2_8_10, fig.height=3}
+# ROC curve for simple binary logistic regression model
+# Creating prediction object
+pred_simple_obj <- prediction(
+  predictions = probs_simple,
+  labels = diabetes_test$type_f
+)
+
+# Computing ROC curve
+roc_simple <- performance(
+  pred_simple_obj,
+  measure = "tpr",
+  x.measure = "fpr"
+)
+
+# Plotting ROC curve
+plot(
+  roc_simple,
+  colorkey = TRUE,
+  colorize = TRUE,
+  lwd = 2,
+  main = "ROC Curve for Simple Binary Logistic Regression",
+  print.cutoffs.at = c(0.2, 0.5),
+  cex.axis = 0.9,
+  cex.lab = 1
+)
+
+abline(a = 0, b = 1, lty = 2, col = "grey")
+
+# Computing AUC
+auc_simple <- performance(pred_simple_obj, measure = "auc")
+auc_simple_value <- auc_simple@y.values[[1]]
+auc_simple_value
+```
+```{r Task_2_8_11, echo=FALSE, fig.height=3}
+# ROC curve for boosting
+# Creating prediction object
+pred_boost_obj <- prediction(
+  predictions = probs_boost,
+  labels = diabetes_test$type_f
+)
+
+# Computing ROC curve
+roc_boost <- performance(
+  pred_boost_obj,
+  measure = "tpr",
+  x.measure = "fpr"
+)
+
+# Plotting ROC curve
+plot(
+  roc_boost,
+  colorkey = TRUE,
+  colorize = TRUE,
+  lwd = 2,
+  main = "ROC Curve for Gradient Boosting",
+  print.cutoffs.at = c(0.2, 0.5),
+  cex.axis = 0.9,
+  cex.lab = 1
+)
+
+abline(a = 0, b = 1, lty = 2, col = "grey")
+
+# Computing AUC
+auc_boost <- performance(pred_boost_obj, measure = "auc")
+auc_boost_value <- auc_boost@y.values[[1]]
+auc_boost_value
+```
+```{r Metric_Table, echo=FALSE}
+f1_score <- 2 * precision_simple * sensitivity_simple / (precision_simple + sensitivity_simple) 
+# Performance metrics table
+performance_table <- data.frame(
+  Model = c("Logistic Regression",
+            "KNN",
+            "Boosting",
+            "Decision Tree",
+            "Random Forest"),
+  
+  Error = c(error_simple,
+            error_knn,
+            error_boost,
+            error_tree,
+            error_rf),
+  
+  Accuracy = c(accuracy_simple,
+               accuracy_knn,
+               accuracy_boost,
+               accuracy_tree,
+               accuracy_rf),
+  
+  Sensitivity = c(sensitivity_simple,
+                  sensitivity_knn,
+                  sensitivity_boost,
+                  sensitivity_tree,
+                  sensitivity_rf),
+  
+  Specificity = c(specificity_simple,
+                  specificity_knn,
+                  specificity_boost,
+                  specificity_tree,
+                  specificity_rf),
+  
+  Precision = c(precision_simple,
+                precision_knn,
+                precision_boost,
+                precision_tree,
+                precision_rf),
+  
+  F1 = c(f1_score,
+         F1_knn,
+         F1_boost,
+         F1_tree,
+         F1_rf)
+)
+
+performance_table[,2:7] <- round(performance_table[,2:7], 4)
+
+knitr::kable(
+  performance_table,
+  caption = "Performance metrics for machine learning models"
+)
+```
+## Task 2.9
+Multiple machine learning methods were applied to the diabetes data, and compared using classification error, accuracy, sensitivity, specificity, precision and F1 score. Overall, model performance was broadly similar but there were important differences in their ability to correctly identify diabetes cases.
+
+The simple binary logistic regression model achieved the highest accuracy (75.18%), the lowest error rate (24.82%), and the highest AUC value of 0.8195. This indicates that the model was effective at distinguishing between diabetic and non-diabetic individuals. The model also achieved a relatively high precision of 71.23%, meaning that a large proportion of the predicted diabetic individuals were correctly classified. This model was also easily interpretable, with plasma glucose concentration, body mass index, age, and diabetes pedigree function being identified as significant predictors of diabetes.
+
+The decision tree model achieved the highest sensitivity of 56.44% and the highest F1 score of 0.6064, meaning that it identified the largest proportion of true diabetic cases while maintaining a balance between false negatives and false positives. Precision (65.52%) was slightly worse than logistic regression and K-nearest neaighbours, meaning that there were a greater number of false positive classifications. However, the tree structure was easily interpretable, with glucose concentration and BMI being deemed the most important decision rules.
+
+KNN achieved the highest specificity of 91.71% as well as the highest precision at 73.21%, indicating that when the model predicted diabetes, it was most likely to be correct. However, the model also had the lowest sensitivity, achieving only 40.59%, meaning that many true diabetes cases were missed.
+
+Random forest showed balanced performance in comparison, achieving moderate sensitivity, specificity, and precision values. However, it did not outperform the simpler binary logistic regression model overall. The variable importance measures from the random forest model also showed that glucose concentration was the strongest predictor diabetes, consistent with other models.
+
+Gradient boosting, in this scenario, did not perform as well as the other models. Although boosting is a highly flexible machine learning technique, it produced the lowest accuracy, lowest precision, and highest error, as well as the second lowest sensitivity, specificity, and F1 score. This may be due to the structure of the diabetes data being relatively simple, and better interpreted by simpler models like logistic regression and decision tree.
+
+In conclusion, the simple binary logistic regression model would be best suited for this application. It achieved the strongest performance across various metrics, while remaining highly interpretable. This is an important consideration in a medical setting, as clinicians must understand how predictions are being made. The decision tree model could be considered to be a strong alternative, due to its similar performance in metrics, as well as the easy-to-understand graphical illustration.
